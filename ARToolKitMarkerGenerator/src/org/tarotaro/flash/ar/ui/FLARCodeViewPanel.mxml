@@ -1,0 +1,106 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<mx:TitleWindow xmlns:mx="http://www.adobe.com/2006/mxml" 
+				layout="absolute"
+				showCloseButton="true"
+				close="closeWindow()"
+				creationComplete="init()">
+	<mx:Metadata>
+		[Event("startSave")]
+		[Event("endSave")]
+	</mx:Metadata>
+	<mx:Script>
+		<![CDATA[
+		import flash.display.Bitmap;
+		import flash.display.BitmapData;
+		import flash.display.Shape;
+		import flash.events.Event;
+		import flash.geom.Rectangle;
+		import flash.net.FileReference;
+		import org.libspark.flartoolkit.core.FLARCode;
+		import org.tarotaro.flash.display.PhotoStage;
+
+		private var _patternImage:Bitmap;
+		private var _code:FLARCode;
+
+		//members for save pattern.
+		private var _saveFileReference:FileReference;
+
+		private var _photoStage:PhotoStage;
+
+		private function init():void 
+		{
+			//initalize save marker pattern.
+			this._saveFileReference = new FileReference();
+			this._saveFileReference.addEventListener(Event.SELECT, savePatternSelected);
+			this._saveFileReference.addEventListener(Event.COMPLETE, savePatternComplete);
+			this._saveFileReference.addEventListener(Event.CANCEL, savePatternCanceled);
+			
+			buttonsBox.y = preview.height - buttonsBox.height;
+			this._photoStage = new PhotoStage(preview.width,preview.height);
+			preview.addChild(this._photoStage);
+		}
+
+		public function set pattern(pat:FLARCode):void 
+		{
+			this._code = pat;
+			var patBW:Array = pat.getPatBW()[0];
+			var pWidth:int = pat.getWidth();
+			var pHeight:int = pat.getHeight();
+
+			var bmp:BitmapData = new BitmapData(pWidth, pHeight);
+			var bw:uint;
+			var color:uint;
+			for (var x:uint = 0; x < pWidth; x++) {
+				for (var y:uint = 0; y < pHeight; y++) {//(0:R/1:G/2:B)
+					bw = (255-((patBW[y][x] & 0xFF) + this._code.averageOfPattern))&0xFF;
+					color = (bw << 16) | (bw << 8) | bw;
+					bmp.setPixel(x, y, color);
+				}
+			}
+			
+			var shape:Shape = new Shape();
+			var image:Bitmap = new Bitmap(bmp);
+			image.scaleX = image.scaleY = preview.height / image.height;
+			
+			
+			shape.graphics.lineStyle(1);
+			shape.graphics.drawRect(0,0,image.width,image.height);
+			this._photoStage.addChild(image);
+			this._photoStage.addChild(shape);
+		}
+		
+		private function savePattern():void 
+		{
+			dispatchEvent(new Event("startSave"));
+			var out:String = this._code.toString();
+			this._saveFileReference.save(out, "marker" + this._code.getWidth() + ".pat");
+		}
+
+		private function savePatternCanceled(e:Event = null ):void 
+		{
+			//trace("cancel save");
+			dispatchEvent(new Event("endSave"));
+		}
+		
+		private function closeWindow():void 
+		{
+			this.visible = false;
+		}
+		private function savePatternComplete(e:Event = null ):void 
+		{
+			//trace("complete save", e);
+			dispatchEvent(new Event("endSave"));
+		}
+		
+		private function savePatternSelected(e:Event = null ):void 
+		{
+			//trace("start save", e);
+		}
+		]]>
+	</mx:Script>
+		<mx:UIComponent id="preview" percentWidth="100" percentHeight="100"/>
+		<mx:HBox id="buttonsBox" percentWidth="100">
+			<mx:Spacer percentWidth="100"/>
+			<mx:Button id="saveButton" label="Save" click="savePattern()"/>
+		</mx:HBox>
+</mx:TitleWindow>

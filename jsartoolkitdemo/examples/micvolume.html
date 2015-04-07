@@ -1,0 +1,74 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=shift_jis" />
+<title>JSAR Example - JSAR Mic Volume</title>
+<script type="text/javascript" src="../js/swfobject.js"></script>
+<script type="text/javascript" src="../js/jsar.js"></script>
+<script type="text/javascript">
+
+    var jsar;
+    //var MARKER_CODE  = [ '../code/paper/image_32x32.pat', '../code/paper/2_small_content.pat', '../code/paper/3_big_content.pat', '../code/paper/4_header.pat', '../code/paper/5_content.pat', '../code/paper/6_slidebar.pat', '../code/paper/7_footer.pat'	];
+    //var MARKER_TITLE = [ '32x32', 'Small Content', 'Big Content', 'Header','Body','Slide Bar','Footer' ];
+
+	//new for test
+	
+	
+	 var MARKER_CODE  = [ '../code/paper/image_32x32.pat'];
+	 var MARKER_TITLE = [ '32x32'];
+    function ondetected ( result ) {
+        jsar.clearHTML();
+        if ( ! result.detected ) return;
+
+        var base = jsar.getHTML();
+        for( var i=0; i<result.markers.length; i++ ) {
+            var marker = result.markers[i];
+            var div = document.createElement( 'div' );
+            div.style.fontFamily = 'Georgia';
+            div.style.position   = 'absolute';
+
+            div.style.color = marker.getColor();
+
+            // mic volume 0 - 100 * 4
+            var size  = result.mic*4;
+            var width = jsar.displayX;
+            var minx  = marker.getLeft();
+            var maxx  = marker.getRight();
+            var miny  = marker.getTop();
+            var maxy  = marker.getBottom();
+
+            div.style.left     = Math.floor((maxx+minx)/2-width/2)+'px';
+            div.style.top      = Math.floor((maxy+miny)/2-size/2)+'px';
+            div.style.width    = width+'px';
+            div.style.fontSize = size+'px';
+            div.style.textAlign = 'center';
+
+            var title = MARKER_TITLE[marker.codeid];
+            var txt = document.createTextNode( title );
+            div.appendChild( txt );
+            base.appendChild( div );
+        }
+    }
+
+    function init () {
+        jsar = new JSAR( 'jsar_here' );
+        jsar.drawMarkerRect = true;
+        jsar.enableMic  = true;
+        jsar.onDetected = ondetected;
+        jsar.onLost     = ondetected;
+        jsar.captureX   = 320;
+        jsar.captureY   = 240;
+        jsar.displayX   = 640;
+        jsar.displayY   = 480;
+        jsar.init();
+        jsar.setMarker( MARKER_CODE );
+    }
+
+    window.onload = init;
+
+</script>
+</head>
+<body>
+<div id="jsar_here"></div>
+</body>
+</html>

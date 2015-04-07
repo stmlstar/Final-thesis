@@ -1,0 +1,302 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<mx:Application xmlns:mx="http://www.adobe.com/2006/mxml" 
+				xmlns:ar="org.tarotaro.flash.ar.ui.*"
+				width="640" height="600" layout="absolute"
+				applicationComplete="init()">
+	<mx:Script>
+		<![CDATA[
+		import flash.display.Bitmap;
+		import flash.display.BitmapData;
+		import flash.display.Graphics;
+		import flash.display.Loader;
+		import flash.display.Shape;
+		import flash.events.Event;
+		import flash.events.MouseEvent;
+		import flash.geom.Rectangle;
+		import flash.media.Camera;
+		import flash.media.Video;
+		import flash.net.FileFilter;
+		import flash.net.FileReference;
+		import flash.utils.ByteArray;
+		import mx.collections.ArrayCollection;
+		import mx.controls.Alert;
+		import mx.core.UIComponent;
+		import org.libspark.flartoolkit.core.FLARCode;
+		import org.libspark.flartoolkit.core.FLARSquare;
+		import org.libspark.flartoolkit.core.FLARSquareDetector;
+		import org.libspark.flartoolkit.core.FLARSquareStack;
+		import org.libspark.flartoolkit.core.param.FLARParam;
+		import org.libspark.flartoolkit.core.pickup.FLARDynamicRatioColorPatt_O3;
+		import org.libspark.flartoolkit.core.raster.FLARRaster_BitmapData;
+		import org.libspark.flartoolkit.core.raster.IFLARRaster;
+		import org.libspark.flartoolkit.core.raster.rgb.FLARRgbRaster_BitmapData;
+		import org.libspark.flartoolkit.core.raster.rgb.IFLARRgbRaster;
+		import org.libspark.flartoolkit.core.rasterfilter.rgb2bin.FLARRasterFilter_BitmapDataThreshold;
+		import org.tarotaro.flash.display.PhotoStage;
+
+		//members for webcam.
+		private var _webcam:Camera;
+		private var _video:Video;
+		private var _cameras:Array = new Array();
+		private static const MODE_SELECT_MESSAGE:String = "Select...";
+		private static const LOAD_IMAGE_MESSAGE:String = "Load marker image"; 
+		private static const SELECT_CAMERA_MESSAGE:String = "Camera Mode";
+
+		//members for load image.
+		private var _photoStage:PhotoStage;
+		private var _imgLoader:Loader;
+		private var _loadFileReference:FileReference;
+		private static const _imgFilters:Array = [
+			new FileFilter("Images (*.jpg, *.jpeg, *.gif, *.png)", "*.jpg;*.jpeg;*.gif;*.png"),
+		];
+		
+
+		//members for FLARToolKit
+		[Embed(source = "../assets/camera_para.dat", mimeType = "application/octet-stream")]private var CParam:Class;
+		private var _capture:Bitmap;
+		private var _detector:FLARSquareDetector;
+		private var _stack:FLARSquareStack;
+		private var _square:FLARSquare;
+		private var _raster:IFLARRgbRaster;
+		private var _monoSrc:IFLARRaster;
+		private var _flarFilter:FLARRasterFilter_BitmapDataThreshold;
+		private var _overlay:Shape;
+
+		private const _segments:ArrayCollection = new ArrayCollection(
+			[ { label:"4x4", data:4 },
+			  { label:"8x8", data:8 },
+			  { label:"16x16", data:16 },
+			  { label:"32x32", data:32 },
+			  { label:"64x64", data:64 } ]);
+		
+
+		/**
+		 * initialize FLARToolKit objects.
+		 */
+		private function initFLARToolKit():void
+		{
+			var param:FLARParam = new FLARParam();
+			param.loadARParam(new CParam() as ByteArray);
+			param.changeScreenSize(cameraComp.width,cameraComp.height);
+			this._detector = new FLARSquareDetector(param.getDistortionFactor(), param.getScreenSize());
+			this._capture = new Bitmap(new BitmapData(cameraComp.width, cameraComp.height));
+			this._raster = new FLARRgbRaster_BitmapData(this._capture.bitmapData);
+			this._flarFilter = new FLARRasterFilter_BitmapDataThreshold(90);
+			this._monoSrc = new FLARRaster_BitmapData(this._raster.getWidth(),this._raster.getHeight());
+			this._stack = new FLARSquareStack(10);
+		}
+		
+		/**
+		 * initialize
+		 */
+		private function init():void 
+		{
+			//initialize ui
+			cameraComp.y = configPanel.height;
+			patPreview.y = configPanel.height + 5;
+			this._photoStage = new PhotoStage(cameraComp.width, cameraComp.height);
+			cameraComp.addChild(this._photoStage);
+
+			//initialize camera selector
+			this._cameras = new Array();
+			this._cameras.push(MODE_SELECT_MESSAGE);
+			this._cameras.push(SELECT_CAMERA_MESSAGE);
+			this._cameras.concat(Camera.names);
+			this._cameras.push(LOAD_IMAGE_MESSAGE);
+			this.modeSelect.dataProvider = this._cameras;
+
+			//initialize load images.
+			this._loadFileReference = new FileReference();
+			this._loadFileReference.addEventListener(Event.SELECT, loadLoacalImage);
+			this._loadFileReference.addEventListener(Event.COMPLETE, loadLoacalImageComplete);
+			this._loadFileReference.addEventListener(Event.CANCEL, loadLoacaImageCanceled);
+
+			this.initFLARToolKit();
+
+			//initialize camera
+			this._webcam = Camera.getCamera();
+			if (this._webcam) {
+				this.modeSelect.selectedIndex = 0;
+				this._webcam.setMode(cameraComp.width,cameraComp.height, 30);
+				this._video = new Video(cameraComp.width,cameraComp.height);
+				this._video.attachCamera(this._webcam);
+				this._photoStage.addChild(this._video);
+				//start detecting.
+				this.resume();
+			} 
+			this._overlay = cameraComp.addChild(new Shape()) as Shape;
+		}
+		
+		private function loadLoacaImageCanceled(e:Event):void 
+		{
+			this.update();
+		}
+		
+		private function prepareImage(e:Event):void 
+		{
+			this._imgLoader.contentLoaderInfo.removeEventListener(Event.COMPLETE, prepareImage);
+			this._photoStage.reflesh();
+			this.update();
+		}
+
+		private function loadLoacalImageComplete(e:Event):void 
+		{
+			//trace("complete load", e);
+			if (this._imgLoader) {
+				try { 
+					this._photoStage.removeChild(this._imgLoader);
+				} catch (e:Error)
+				{
+					//trace("remove failed from photoStage.", e);
+				}
+			}
+			this._imgLoader = new Loader();
+			this._photoStage.addChild(this._imgLoader);
+			this._imgLoader.contentLoaderInfo.addEventListener(Event.COMPLETE, prepareImage);
+			this._imgLoader.loadBytes(this._loadFileReference.data);
+		}
+		
+		private function loadLoacalImage(e:Event):void 
+		{
+			//trace("start load", e);
+			this._loadFileReference.load();
+		}
+		
+		private function onChangeMode():void 
+		{
+			if (modeSelect.selectedIndex == 0) return;
+			getPattButton.enabled = false;
+			this._overlay.graphics.clear();
+			var rect:Rectangle = this._capture.bitmapData.rect;
+			this._capture.bitmapData.fillRect(rect, 0xFFFFFFFF);
+			switch(String(modeSelect.value)) {
+				case SELECT_CAMERA_MESSAGE:
+					//use default webcamera.
+					this._webcam = Camera.getCamera();
+					break;
+				case LOAD_IMAGE_MESSAGE:
+					//load new image.
+					this._webcam = null;
+					if (this._video && this._photoStage.contains(this._video)) {
+						this._photoStage.removeChild(this._video);
+						this.pause();
+					}
+					_loadFileReference.browse(_imgFilters);
+					modeSelect.selectedIndex = 0;
+					break;
+				default:
+					//change webcamera.
+					this._webcam = Camera.getCamera(String(this.modeSelect.value));
+					break;
+			}
+			if (this._webcam) {
+				this._webcam.setMode(cameraComp.width/2,cameraComp.height/2, 30);
+				this._video.attachCamera(this._webcam);
+				if (!cameraComp.contains(this._video)) {
+					this._photoStage.addChild(this._video);
+				}
+				this.resume();
+			}
+		}
+		
+		private function getPatternFromView():void 
+		{
+			var markerSize:Number = markserSizeSlider.value / 10;
+			trace(markerSize);
+			var segmentsNum:uint = this.markerSegment.selectedItem.data;
+			var colorPat:FLARDynamicRatioColorPatt_O3 = 
+					new FLARDynamicRatioColorPatt_O3(segmentsNum, segmentsNum, markerSize, markerSize);
+			colorPat.pickFromRaster(this._raster, this._square);
+			var code:FLARCode = new FLARCode(segmentsNum, segmentsNum);
+			code.fromPattern(colorPat);
+			patPreview.pattern = code;
+			patPreview.visible = true;
+		}
+
+		
+		private function pause(e:Event = null):void {
+			if (this._webcam) {
+				this._overlay.graphics.clear();
+				this.removeEventListener(Event.ENTER_FRAME, this.update);
+			}
+		}
+		
+		private function resume(e:Event = null):void {
+			if (this._webcam) {
+				this.addEventListener(Event.ENTER_FRAME, this.update);
+			}
+		}
+
+		private function update(e:Event = null):void
+		{
+			var g:Graphics = this._overlay.graphics;
+			g.clear();
+			this._capture.bitmapData.draw(this._photoStage);
+			this._flarFilter.doFilter(this._raster, this._monoSrc);
+			try {
+				this._detector.detectMarker(this._monoSrc, this._stack);
+			} catch (e:Error) {
+				//trace("error occured while detecting.",e);
+				return;
+			}
+			//trace(this._stack.getLength());
+			if (getPattButton.enabled = (this._stack.getLength() > 0)) {
+				this._square = this._stack.getItem(0) as FLARSquare;
+				if(this._square) {
+					var v:Array;
+					v = this._square.sqvertex;
+					g.lineStyle(3, 0xFF0000);
+					g.moveTo(v[3].x, v[3].y);
+					for (var vi:int = 0; vi < v.length; vi++) {
+						g.lineTo(v[vi].x, v[vi].y);
+					}
+				}
+			}
+			this._stack.clear();
+		}
+		
+		]]>
+	</mx:Script>
+	<mx:UIComponent id="cameraComp" width="640" height="480" />
+	<mx:Panel title="Settings"
+			  id="configPanel"
+			  percentWidth="100"
+			  paddingTop="0" paddingLeft="0" paddingRight="0">
+		<mx:HBox percentWidth="100"
+				 alpha="1"
+				 paddingBottom="10" paddingLeft="10" paddingRight="10" paddingTop="10">
+			<mx:VBox>
+				<mx:Label text="Mode Select:" fontWeight="bold" />
+				<mx:ComboBox id="modeSelect" 
+							 openDuration="50" closeDuration="50" 
+							 change="onChangeMode()"/>
+			</mx:VBox>
+			<mx:Spacer percentWidth="10"/>
+			<mx:Button id="getPattButton" 
+					   label="Get Pattern" 
+					   click="getPatternFromView()" 
+					   percentHeight="100" 
+					   enabled="false" />
+			<mx:Spacer percentWidth="100" />
+			<mx:VBox>
+				<mx:Label text="Marker Segments:" fontWeight="bold" />
+				<mx:ComboBox id="markerSegment" 
+							 dataProvider="{_segments}" selectedIndex="2" 
+							 openDuration="50" closeDuration="50"/>
+			</mx:VBox>
+			<mx:Spacer percentWidth="10"/>
+			<mx:VBox>
+				<mx:Label text="Marker Size:" fontWeight="bold" />
+				<mx:HSlider id="markserSizeSlider" 
+							minimum="5" maximum="100" 
+							tickInterval="5" snapInterval="5" 
+							value="50"
+							labels="[5%,100%]"/>
+			</mx:VBox>
+		</mx:HBox>
+	</mx:Panel>
+	<ar:FLARCodeViewPanel id="patPreview" title="Preview Marker" 
+						  width="200" height="200" 
+						  isPopUp="true" visible="true"
+						  startSave="pause(event)" endSave="resume(event)" />
+</mx:Application>
